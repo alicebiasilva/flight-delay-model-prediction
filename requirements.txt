@@ -1,0 +1,5 @@
+pandas==3.0.0
+holidays==0.46
+pyarrow==23.0.1
+pathlib==26.0.1
+logging==26.0.1
