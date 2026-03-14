@@ -2,30 +2,78 @@ import pandas as pd
 import holidays
 from pathlib import Path
 import logging
+import time
 
 # -------------------------------------------------------
-# Configuração
+# Configuração de paths
 # -------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
 RAW_PATH = BASE_DIR / "data/raw"
 PROCESSED_PATH = BASE_DIR / "data/processed"
+LOG_PATH = BASE_DIR / "logs"
 
 YEAR = 2015
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+LOG_PATH.mkdir(parents=True, exist_ok=True)
+
+# -------------------------------------------------------
+# Configuração do logger (CSV)
+# -------------------------------------------------------
+
+logger = logging.getLogger("pipeline")
+logger.setLevel(logging.INFO)
+
+file_handler = logging.FileHandler(LOG_PATH / "pipeline_logs.csv")
+
+formatter = logging.Formatter(
+    "%(asctime)s,%(levelname)s,%(funcName)s,%(message)s"
 )
+
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+
+logger.addHandler(console_handler)
+
+# -------------------------------------------------------
+# Decorator para medir tempo das etapas
+# -------------------------------------------------------
+
+def log_step(func):
+    def wrapper(*args, **kwargs):
+
+        start = time.time()
+
+        logger.info(f"START {func.__name__}")
+
+        result = func(*args, **kwargs)
+
+        elapsed = time.time() - start
+
+        if isinstance(result, pd.DataFrame):
+            logger.info(
+                f"END {func.__name__},rows={len(result):,},time_sec={elapsed:.2f}"
+            )
+        else:
+            logger.info(
+                f"END {func.__name__},time_sec={elapsed:.2f}"
+            )
+
+        return result
+
+    return wrapper
+
 
 # -------------------------------------------------------
 # Load data
 # -------------------------------------------------------
 
+@log_step
 def load_data():
-
-    logging.info("Loading raw datasets...")
 
     flight_columns = [
         "YEAR","MONTH","DAY","DAY_OF_WEEK",
@@ -68,7 +116,7 @@ def load_data():
         usecols=["IATA_CODE","AIRPORT","CITY","STATE","LATITUDE","LONGITUDE"]
     )
 
-    logging.info(f"Flights loaded: {len(flights):,}")
+    logger.info(f"Flights loaded {len(flights):,}")
 
     return flights, airlines, airports
 
@@ -77,9 +125,8 @@ def load_data():
 # Merge datasets
 # -------------------------------------------------------
 
+@log_step
 def merge_data(flights, airlines, airports):
-
-    logging.info("Merging datasets...")
 
     df = flights.merge(
         airports.set_index("IATA_CODE"),
@@ -100,8 +147,6 @@ def merge_data(flights, airlines, airports):
         "AIRLINE_y": "AIRLINE_NAME"
     })
 
-    del flights
-
     return df
 
 
@@ -109,34 +154,15 @@ def merge_data(flights, airlines, airports):
 # Filtering
 # -------------------------------------------------------
 
+@log_step
 def filter_cancelled_diverted(df):
-
-    logging.info("Filtering cancelled/diverted flights...")
 
     df = df[
         (df["CANCELLED"] == 0) &
         (df["DIVERTED"] == 0)
     ]
 
-    return df
-
-
-# -------------------------------------------------------
-# Remove leakage
-# -------------------------------------------------------
-
-LEAKAGE_COLUMNS = [
-    "CANCELLED",
-    "DIVERTED",
-    "AIRLINE_NAME"
-]
-
-
-def remove_data_leakage(df):
-
-    logging.info("Removing leakage columns...")
-
-    df = df.drop(columns=LEAKAGE_COLUMNS, errors="ignore")
+    df = df.drop(columns=["CANCELLED","DIVERTED"], errors="ignore")
 
     return df
 
@@ -145,9 +171,8 @@ def remove_data_leakage(df):
 # Missing values
 # -------------------------------------------------------
 
+@log_step
 def remove_missing_location(df):
-
-    logging.info("Removing rows with missing location data...")
 
     df = df.dropna(
         subset=["AIRPORT","CITY","STATE","LATITUDE","LONGITUDE"]
@@ -157,15 +182,27 @@ def remove_missing_location(df):
 
 
 # -------------------------------------------------------
+# HHMM → minutos
+# -------------------------------------------------------
+
+@log_step
+def hhmm_to_minutes(df):
+
+    df["SCHEDULED_DEPARTURE_MIN"] = df["SCHEDULED_DEPARTURE"].apply(
+        lambda hhmm: (int(hhmm) // 100) * 60 + (int(hhmm) % 100)
+    )
+
+    return df
+
+
+# -------------------------------------------------------
 # Feature engineering
 # -------------------------------------------------------
 
+@log_step
 def create_features(df):
 
-    logging.info("Creating features...")
-
     df["DATE"] = pd.to_datetime(df[["YEAR","MONTH","DAY"]])
-
     df["HOUR"] = df["SCHEDULED_DEPARTURE"] // 100
 
     df["IS_DELAYED"] = (df["DEPARTURE_DELAY"] >= 15).astype("int8")
@@ -187,36 +224,61 @@ def create_features(df):
 
     df["IS_HOLIDAY"] = df["DATE"].isin(holiday_dates).astype("int8")
 
-    winter_dates = set(pd.date_range("2015-01-01","2015-03-19")) | \
-                   set(pd.date_range("2015-12-21","2015-12-31"))
+    return df
 
-    spring_dates = set(pd.date_range("2015-03-20","2015-06-20"))
-    summer_dates = set(pd.date_range("2015-06-21","2015-09-22"))
-    fall_dates = set(pd.date_range("2015-09-23","2015-12-20"))
 
-    df["IS_WINTER"] = df["DATE"].isin(winter_dates).astype("int8")
-    df["IS_SPRING"] = df["DATE"].isin(spring_dates).astype("int8")
-    df["IS_SUMMER"] = df["DATE"].isin(summer_dates).astype("int8")
-    df["IS_FALL"] = df["DATE"].isin(fall_dates).astype("int8")
+# -------------------------------------------------------
+# Top N categorias
+# -------------------------------------------------------
+
+@log_step
+def create_top_n_feature(
+    df,
+    column,
+    target="IS_DELAYED",
+    top_n=10,
+    new_column_name=None,
+    drop_original=False
+):
+
+    if new_column_name is None:
+        new_column_name = f"{column}_TOP{top_n}"
+
+    filtered = df[df[target] == 1]
+
+    counts = filtered[column].value_counts()
+
+    top_categories = counts.head(top_n).index
+
+    if isinstance(df[column].dtype, pd.CategoricalDtype):
+        df[column] = df[column].cat.add_categories("Other")
+
+    df[new_column_name] = df[column].where(
+        df[column].isin(top_categories),
+        "Other"
+    ).astype("string")
+
+    if drop_original:
+        df = df.drop(columns=[column])
 
     return df
+
 
 
 # -------------------------------------------------------
 # Save data
 # -------------------------------------------------------
 
+@log_step
 def save_data(df):
 
     PROCESSED_PATH.mkdir(parents=True, exist_ok=True)
 
     output_path = PROCESSED_PATH / "flights_processed.parquet"
 
-    logging.info(f"Saving dataset to {output_path}")
-
     df.to_parquet(output_path, index=False)
 
-    del df
+    logger.info(f"Saved to {output_path}")
 
 
 # -------------------------------------------------------
@@ -231,15 +293,23 @@ def main():
 
     df = filter_cancelled_diverted(df)
 
-    df = remove_data_leakage(df)
+    df = hhmm_to_minutes(df)
 
     df = remove_missing_location(df)
 
     df = create_features(df)
 
+    df = create_top_n_feature(df, "ORIGIN_AIRPORT")
+    df = create_top_n_feature(df, "DESTINATION_AIRPORT")
+    df = create_top_n_feature(df, "CITY")
+    df = create_top_n_feature(df, "STATE")
+    df = create_top_n_feature(df, "TAIL_NUMBER")
+    df = create_top_n_feature(df, "AIRLINE")
+    df = create_top_n_feature(df, "FLIGHT_NUMBER")
+
     save_data(df)
 
-    logging.info("Preprocessing finished successfully.")
+    logger.info("Pipeline finished successfully")
 
 
 if __name__ == "__main__":
