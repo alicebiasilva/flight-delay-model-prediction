@@ -339,7 +339,10 @@ def main():
 
     df = create_top_n_feature(df, "FLIGHT_NUMBER")
 
+
     df["ROUTE"] = df["ORIGIN_AIRPORT"].astype(str) + "-" + df["DESTINATION_AIRPORT"].astype(str)
+
+    df = create_top_n_feature(df, "ROUTE")
 
     save_data(df)
 
