@@ -128,13 +128,35 @@ def load_data():
 @log_step
 def merge_data(flights, airlines, airports):
 
+    # origem
     df = flights.merge(
-        airports.set_index("IATA_CODE"),
+        airports.rename(columns={
+            "LATITUDE": "ORIGIN_LAT",
+            "LONGITUDE": "ORIGIN_LON",
+            "AIRPORT": "ORIGIN_AIRPORT_NAME",
+            "CITY": "ORIGIN_CITY",
+            "STATE": "ORIGIN_STATE"
+        }).set_index("IATA_CODE"),
         left_on="ORIGIN_AIRPORT",
         right_index=True,
         how="left"
     )
 
+    # destino
+    df = df.merge(
+        airports.rename(columns={
+            "LATITUDE": "DEST_LAT",
+            "LONGITUDE": "DEST_LON",
+            "AIRPORT": "DEST_AIRPORT_NAME",
+            "CITY": "DEST_CITY",
+            "STATE": "DEST_STATE"
+        }).set_index("IATA_CODE"),
+        left_on="DESTINATION_AIRPORT",
+        right_index=True,
+        how="left"
+    )
+
+    # airline
     df = df.merge(
         airlines.set_index("IATA_CODE"),
         left_on="AIRLINE",
@@ -175,7 +197,7 @@ def filter_cancelled_diverted(df):
 def remove_missing_location(df):
 
     df = df.dropna(
-        subset=["AIRPORT","CITY","STATE","LATITUDE","LONGITUDE"]
+        subset=["ORIGIN_LAT","ORIGIN_LON","DEST_LAT","DEST_LON"]
     )
 
     return df
@@ -300,12 +322,24 @@ def main():
     df = create_features(df)
 
     df = create_top_n_feature(df, "ORIGIN_AIRPORT")
+
     df = create_top_n_feature(df, "DESTINATION_AIRPORT")
-    df = create_top_n_feature(df, "CITY")
-    df = create_top_n_feature(df, "STATE")
+
+    df = create_top_n_feature(df, "ORIGIN_CITY")
+
+    df = create_top_n_feature(df, "DEST_CITY")
+
+    df = create_top_n_feature(df, "ORIGIN_STATE")
+
+    df = create_top_n_feature(df, "DEST_STATE")
+
     df = create_top_n_feature(df, "TAIL_NUMBER")
+
     df = create_top_n_feature(df, "AIRLINE")
+
     df = create_top_n_feature(df, "FLIGHT_NUMBER")
+
+    df["ROUTE"] = df["ORIGIN_AIRPORT"].astype(str) + "-" + df["DESTINATION_AIRPORT"].astype(str)
 
     save_data(df)
 
