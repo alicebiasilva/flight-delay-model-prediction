@@ -107,6 +107,9 @@ O ajuste de threshold permitiu controlar o trade-off entre falsos positivos e fa
 
 Além disso, priorizou-se sinalizar a previsão de atraso mesmo com risco de falso positivo, permitindo que o cliente se planeje melhor em relação aos seus compromissos no destino.
 
+- **PCA (Análise de Componentes Principais) 📉:** utilizada para reduzir a dimensionalidade das features e identificar combinações de variáveis mais relevantes, preservando a maior parte da variância dos dados. Isso ajudou a melhorar a visualização e a interpretação dos clusters.  
+
+
 <br>
 
 ## ⚠️ Limitações e Próximos Passos
