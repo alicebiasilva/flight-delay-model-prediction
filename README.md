@@ -7,7 +7,7 @@ Este projeto tem como objetivo desenvolver um modelo de Machine Learning capaz d
 
 * Autora: Alice Beatriz da Silva
 * Última atualização: 21/03/2026
-* Apresentação em vídeo em: 
+* Apresentação em vídeo em: https://youtu.be/V9phke38VdA
 
 ---
 
